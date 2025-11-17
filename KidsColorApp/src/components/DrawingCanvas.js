@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
-import Canvas from 'react-native-canvas';
-import floodfill from 'q-floodfill';
+import { Canvas, Path, Circle, useCanvasRef, Image as SkiaImage, Skia } from '@shopify/react-native-skia';
+import { SVG_COMPONENTS } from '../data/svgs';
+import { floodFill, hexToRgba } from '../utils/floodFill';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -12,12 +13,11 @@ export const DrawingCanvas = ({
   paths: externalPaths,
   onPathsChange
 }) => {
-  const canvasRef = useRef(null);
+  const canvasRef = useCanvasRef();
   const [paths, setPaths] = useState(externalPaths || []);
   const [currentPath, setCurrentPath] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [canvasReady, setCanvasReady] = useState(false);
-  const contextRef = useRef(null);
+  const [fillImage, setFillImage] = useState(null);
 
   const canvasHeight = screenHeight * 0.6;
 
@@ -25,11 +25,8 @@ export const DrawingCanvas = ({
   useEffect(() => {
     if (externalPaths !== undefined) {
       setPaths(externalPaths);
-      if (canvasReady) {
-        redrawCanvas();
-      }
     }
-  }, [externalPaths, canvasReady]);
+  }, [externalPaths]);
 
   // Notifier le parent quand paths change
   useEffect(() => {
@@ -38,197 +35,168 @@ export const DrawingCanvas = ({
     }
   }, [paths]);
 
-  // Redessiner tout le canvas
-  const redrawCanvas = () => {
-    if (!canvasRef.current || !contextRef.current) return;
+  // Créer un path Skia à partir de points
+  const createSkiaPath = (points) => {
+    if (!points || points.length === 0) return null;
 
-    const ctx = contextRef.current;
-    const canvas = canvasRef.current;
+    const path = Skia.Path.Make();
+    path.moveTo(points[0].x, points[0].y);
 
-    // Effacer le canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Dessiner le fond blanc
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // TODO: Dessiner l'image de fond SVG si présente
-    // Pour l'instant, on garde le fond blanc
-
-    // Dessiner tous les paths sauvegardés dans l'ordre
-    for (let i = 0; i < paths.length; i++) {
-      const path = paths[i];
-
-      if (path.tool === 'bucket') {
-        // Pour le bucket, réappliquer le flood fill
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const fillColor = hexToRgb(path.color);
-        const result = floodfill(imageData, Math.floor(path.points[0].x), Math.floor(path.points[0].y), fillColor);
-        ctx.putImageData(result, 0, 0);
-      } else {
-        drawPath(ctx, path);
-      }
+    for (let i = 1; i < points.length; i++) {
+      path.lineTo(points[i].x, points[i].y);
     }
+
+    return path;
   };
 
-  const handleCanvas = (canvas) => {
-    if (!canvas) return;
-
-    canvas.width = screenWidth;
-    canvas.height = canvasHeight;
-    canvasRef.current = canvas;
-
-    const ctx = canvas.getContext('2d');
-    contextRef.current = ctx;
-
-    // Fond blanc
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    setCanvasReady(true);
-  };
-
-  const hexToRgb = (hex) => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16),
-      a: 255
-    } : { r: 0, g: 0, b: 0, a: 255 };
-  };
-
-  const performFloodFill = async (x, y, color) => {
-    if (!canvasRef.current || !contextRef.current) return;
-
-    const canvas = canvasRef.current;
-    const ctx = contextRef.current;
-
-    try {
-      // Obtenir les données d'image actuelles
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-      // Convertir la couleur hex en RGBA
-      const fillColor = hexToRgb(color);
-
-      // Appliquer le flood fill
-      const result = floodfill(imageData, Math.floor(x), Math.floor(y), fillColor);
-
-      // Remettre les données modifiées sur le canvas
-      ctx.putImageData(result, 0, 0);
-
-      // Sauvegarder cette action comme un "path" pour l'undo
-      const fillPath = {
-        id: Date.now() + Math.random(),
-        tool: 'bucket',
-        color: color,
-        points: [{ x, y }]
-      };
-
-      setPaths(prev => [...prev, fillPath]);
-    } catch (error) {
-      console.error('Flood fill error:', error);
-    }
-  };
-
-  const drawPath = (ctx, path) => {
-    if (!path || !path.points || path.points.length === 0) return;
+  // Rendre un path individuel
+  const renderPath = (path, key) => {
+    if (!path || !path.points || path.points.length === 0) return null;
 
     const { tool, color, points } = path;
     const pathColor = tool === 'eraser' ? '#FFFFFF' : color;
 
-    // Le bucket est géré séparément dans redrawCanvas
+    let strokeWidth = 3;
+    if (tool === 'brush') strokeWidth = 10;
+    if (tool === 'spray') strokeWidth = 2;
+    if (tool === 'eraser') strokeWidth = 20;
+    if (tool === 'pencil') strokeWidth = 3;
+
+    // Bucket tool est géré séparément via fillImage
     if (tool === 'bucket') {
-      return;
+      return null;
     }
 
-    ctx.strokeStyle = pathColor;
-    ctx.fillStyle = pathColor;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    let lineWidth = 3;
-    if (tool === 'brush') lineWidth = 10;
-    if (tool === 'spray') lineWidth = 2;
-    if (tool === 'eraser') lineWidth = 20;
-    if (tool === 'pencil') lineWidth = 3;
-
-    ctx.lineWidth = lineWidth;
-
+    // Stamp tool
     if (tool === 'stamp') {
-      points.forEach(point => {
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, 15, 0, Math.PI * 2);
-        ctx.globalAlpha = 0.7;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-      });
-      return;
+      return points.map((point, index) => (
+        <Circle
+          key={`${key}-stamp-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r={15}
+          color={pathColor}
+          opacity={0.7}
+        />
+      ));
     }
 
-    if (tool === 'spray') {
-      if (path.sprayPoints) {
-        ctx.globalAlpha = 0.5;
-        path.sprayPoints.forEach(point => {
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        ctx.globalAlpha = 1.0;
-      }
-      return;
+    // Spray tool
+    if (tool === 'spray' && path.sprayPoints) {
+      return path.sprayPoints.map((point, index) => (
+        <Circle
+          key={`${key}-spray-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r={2}
+          color={pathColor}
+          opacity={0.5}
+        />
+      ));
     }
 
-    // Pour crayon, pinceau et gomme
+    // Brush, pencil, eraser
     if (points.length === 1) {
-      ctx.beginPath();
-      ctx.arc(points[0].x, points[0].y, lineWidth / 2, 0, Math.PI * 2);
-      ctx.fill();
-      return;
+      return (
+        <Circle
+          key={key}
+          cx={points[0].x}
+          cy={points[0].y}
+          r={strokeWidth / 2}
+          color={pathColor}
+        />
+      );
     }
 
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.stroke();
+    const skiaPath = createSkiaPath(points);
+    if (!skiaPath) return null;
+
+    return (
+      <Path
+        key={key}
+        path={skiaPath}
+        color={pathColor}
+        style="stroke"
+        strokeWidth={strokeWidth}
+        strokeCap="round"
+        strokeJoin="round"
+      />
+    );
   };
 
-  const handleTouchStart = (event) => {
-    if (!canvasReady) return;
+  const performFloodFill = useCallback(async (x, y) => {
+    if (!canvasRef.current) return;
 
-    const { locationX, locationY } = event.nativeEvent;
+    try {
+      // Capturer l'état actuel du canvas
+      const snapshot = canvasRef.current.makeImageSnapshot();
+      if (!snapshot) return;
+
+      // Lire les pixels
+      const pixels = snapshot.readPixels(0, 0);
+      if (!pixels) return;
+
+      const width = snapshot.width();
+      const height = snapshot.height();
+
+      // Convertir la couleur de remplissage
+      const fillColor = hexToRgba(selectedColor);
+
+      // Appliquer le flood fill
+      const filledPixels = floodFill(
+        pixels,
+        width,
+        height,
+        Math.floor(x),
+        Math.floor(y),
+        fillColor,
+        1 // tolérance
+      );
+
+      // Créer une nouvelle image avec les pixels modifiés
+      const newImage = Skia.Image.MakeImage({
+        width,
+        height,
+        alphaType: 'premul',
+        colorType: 'rgba_8888',
+      }, filledPixels, width * 4);
+
+      if (newImage) {
+        setFillImage(newImage);
+
+        // Sauvegarder dans l'historique
+        const fillPath = {
+          id: Date.now() + Math.random(),
+          tool: 'bucket',
+          color: selectedColor,
+          points: [{ x, y }],
+          fillImageData: { pixels: filledPixels, width, height }
+        };
+
+        setPaths(prev => [...prev, fillPath]);
+      }
+    } catch (error) {
+      console.error('Flood fill error:', error);
+    }
+  }, [canvasRef, selectedColor]);
+
+  const handleTouchStart = (event) => {
+    const { x, y } = event.nativeEvent;
 
     if (selectedTool === 'bucket') {
-      performFloodFill(locationX, locationY, selectedColor);
+      performFloodFill(x, y);
       return;
     }
 
     setIsDrawing(true);
-    setCurrentPath([{ x: locationX, y: locationY }]);
+    setCurrentPath([{ x, y }]);
   };
 
   const handleTouchMove = (event) => {
-    if (!isDrawing || !canvasReady) return;
+    if (!isDrawing) return;
 
-    const { locationX, locationY } = event.nativeEvent;
-    const newPath = [...currentPath, { x: locationX, y: locationY }];
-    setCurrentPath(newPath);
-
-    // Dessiner en temps réel
-    if (contextRef.current) {
-      const tempPath = {
-        tool: selectedTool,
-        color: selectedColor,
-        points: newPath
-      };
-
-      // Redessiner tout
-      redrawCanvas();
-      // Dessiner le path en cours
-      drawPath(contextRef.current, tempPath);
-    }
+    const { x, y } = event.nativeEvent;
+    setCurrentPath(prev => [...prev, { x, y }]);
   };
 
   const handleTouchEnd = () => {
@@ -259,12 +227,13 @@ export const DrawingCanvas = ({
       }
 
       setPaths(prev => [...prev, newPath]);
-      redrawCanvas();
     }
 
     setCurrentPath([]);
     setIsDrawing(false);
   };
+
+  const BackgroundSVG = backgroundImage ? SVG_COMPONENTS[backgroundImage] : null;
 
   return (
     <View
@@ -275,10 +244,59 @@ export const DrawingCanvas = ({
       onResponderMove={handleTouchMove}
       onResponderRelease={handleTouchEnd}
     >
+      {/* Image de fond SVG en arrière-plan */}
+      {BackgroundSVG && (
+        <View style={styles.svgContainer} pointerEvents="none">
+          <BackgroundSVG width={screenWidth} height={canvasHeight} />
+        </View>
+      )}
+
       <Canvas
-        ref={handleCanvas}
+        ref={canvasRef}
         style={{ width: screenWidth, height: canvasHeight }}
-      />
+      >
+        {/* Fond blanc semi-transparent pour voir le SVG en dessous */}
+        <Circle
+          cx={screenWidth / 2}
+          cy={canvasHeight / 2}
+          r={Math.max(screenWidth, canvasHeight)}
+          color="white"
+          opacity={BackgroundSVG ? 0 : 1}
+        />
+
+        {/* Image de flood fill si présente */}
+        {fillImage && (
+          <SkiaImage
+            image={fillImage}
+            x={0}
+            y={0}
+            width={screenWidth}
+            height={canvasHeight}
+            fit="cover"
+          />
+        )}
+
+        {/* Afficher tous les chemins enregistrés */}
+        {paths.map((path, index) => renderPath(path, `path-${index}`))}
+
+        {/* Afficher le chemin en cours */}
+        {currentPath.length > 0 && renderPath({
+          id: 'current',
+          tool: selectedTool,
+          color: selectedColor,
+          points: currentPath,
+          sprayPoints: selectedTool === 'spray' ? currentPath.flatMap(point => {
+            const sprays = [];
+            for (let i = 0; i < 5; i++) {
+              sprays.push({
+                x: point.x + (Math.random() - 0.5) * 20,
+                y: point.y + (Math.random() - 0.5) * 20,
+              });
+            }
+            return sprays;
+          }) : undefined
+        }, 'current')}
+      </Canvas>
     </View>
   );
 };
@@ -287,5 +305,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    position: 'relative',
+  },
+  svgContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
 });
