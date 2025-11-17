@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
 import { Canvas, Path, Circle, useCanvasRef, Image as SkiaImage, Skia } from '@shopify/react-native-skia';
-import { SVG_COMPONENTS } from '../data/svgs';
+import { SVG_STRINGS } from '../data/svgs/svgStrings';
 import { floodFill, hexToRgba } from '../utils/floodFill';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -17,9 +17,55 @@ export const DrawingCanvas = ({
   const [paths, setPaths] = useState(externalPaths || []);
   const [currentPath, setCurrentPath] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [fillImage, setFillImage] = useState(null);
+  const [baseImage, setBaseImage] = useState(null); // Image de base : SVG + flood fills
 
   const canvasHeight = screenHeight * 0.6;
+
+  // Charger le SVG pour Skia et créer l'image de base
+  useEffect(() => {
+    if (backgroundImage && SVG_STRINGS[backgroundImage]) {
+      try {
+        const svgString = SVG_STRINGS[backgroundImage];
+        const skSvg = Skia.SVG.MakeFromString(svgString);
+
+        if (skSvg) {
+          // Créer une surface pour rasteriser le SVG
+          const surface = Skia.Surface.Make(Math.floor(screenWidth), Math.floor(canvasHeight));
+          if (surface) {
+            const canvas = surface.getCanvas();
+
+            // Fond blanc
+            canvas.clear(Skia.Color('white'));
+
+            // Dessiner le SVG sur la surface
+            const svgWidth = 300;
+            const svgHeight = 300;
+            const scaleX = screenWidth / svgWidth;
+            const scaleY = canvasHeight / svgHeight;
+            const scale = Math.min(scaleX, scaleY);
+
+            // Centrer le SVG
+            const offsetX = (screenWidth - svgWidth * scale) / 2;
+            const offsetY = (canvasHeight - svgHeight * scale) / 2;
+
+            canvas.save();
+            canvas.translate(offsetX, offsetY);
+            canvas.scale(scale, scale);
+            skSvg.render(canvas);
+            canvas.restore();
+
+            // Créer une image à partir de la surface
+            const image = surface.makeImageSnapshot();
+            setBaseImage(image);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading SVG:', error);
+      }
+    } else {
+      setBaseImage(null);
+    }
+  }, [backgroundImage, screenWidth, canvasHeight]);
 
   // Synchroniser avec les paths externes (pour le clear et undo)
   useEffect(() => {
@@ -128,7 +174,7 @@ export const DrawingCanvas = ({
     if (!canvasRef.current) return;
 
     try {
-      // Capturer l'état actuel du canvas
+      // Capturer l'état actuel du canvas (baseImage + tous les dessins)
       const snapshot = canvasRef.current.makeImageSnapshot();
       if (!snapshot) return;
 
@@ -157,23 +203,16 @@ export const DrawingCanvas = ({
       const newImage = Skia.Image.MakeImage({
         width,
         height,
-        alphaType: 'premul',
+        alphaType: 'unpremul',
         colorType: 'rgba_8888',
       }, filledPixels, width * 4);
 
       if (newImage) {
-        setFillImage(newImage);
+        // La nouvelle baseImage contient tout : SVG original + tous les dessins + le nouveau flood fill
+        setBaseImage(newImage);
 
-        // Sauvegarder dans l'historique
-        const fillPath = {
-          id: Date.now() + Math.random(),
-          tool: 'bucket',
-          color: selectedColor,
-          points: [{ x, y }],
-          fillImageData: { pixels: filledPixels, width, height }
-        };
-
-        setPaths(prev => [...prev, fillPath]);
+        // Nettoyer les paths de dessin car ils sont maintenant intégrés dans baseImage
+        setPaths([]);
       }
     } catch (error) {
       console.error('Flood fill error:', error);
@@ -233,8 +272,6 @@ export const DrawingCanvas = ({
     setIsDrawing(false);
   };
 
-  const BackgroundSVG = backgroundImage ? SVG_COMPONENTS[backgroundImage] : null;
-
   return (
     <View
       style={styles.container}
@@ -244,35 +281,29 @@ export const DrawingCanvas = ({
       onResponderMove={handleTouchMove}
       onResponderRelease={handleTouchEnd}
     >
-      {/* Image de fond SVG en arrière-plan */}
-      {BackgroundSVG && (
-        <View style={styles.svgContainer} pointerEvents="none">
-          <BackgroundSVG width={screenWidth} height={canvasHeight} />
-        </View>
-      )}
-
       <Canvas
         ref={canvasRef}
         style={{ width: screenWidth, height: canvasHeight }}
       >
-        {/* Fond blanc semi-transparent pour voir le SVG en dessous */}
-        <Circle
-          cx={screenWidth / 2}
-          cy={canvasHeight / 2}
-          r={Math.max(screenWidth, canvasHeight)}
-          color="white"
-          opacity={BackgroundSVG ? 0 : 1}
-        />
+        {/* Fond blanc si pas d'image de base */}
+        {!baseImage && (
+          <Circle
+            cx={screenWidth / 2}
+            cy={canvasHeight / 2}
+            r={Math.max(screenWidth, canvasHeight)}
+            color="white"
+          />
+        )}
 
-        {/* Image de flood fill si présente */}
-        {fillImage && (
+        {/* Image de base (SVG + flood fills) */}
+        {baseImage && (
           <SkiaImage
-            image={fillImage}
+            image={baseImage}
             x={0}
             y={0}
             width={screenWidth}
             height={canvasHeight}
-            fit="cover"
+            fit="fill"
           />
         )}
 
@@ -305,13 +336,5 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    position: 'relative',
-  },
-  svgContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
   },
 });
