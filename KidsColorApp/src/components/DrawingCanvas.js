@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
-import Svg, { Path, Circle, G, Rect } from 'react-native-svg';
-import { SVG_COMPONENTS } from '../data/svgs';
+import Canvas from 'react-native-canvas';
+import floodfill from 'q-floodfill';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -12,16 +12,24 @@ export const DrawingCanvas = ({
   paths: externalPaths,
   onPathsChange
 }) => {
+  const canvasRef = useRef(null);
   const [paths, setPaths] = useState(externalPaths || []);
   const [currentPath, setCurrentPath] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const contextRef = useRef(null);
+
+  const canvasHeight = screenHeight * 0.6;
 
   // Synchroniser avec les paths externes (pour le clear et undo)
   useEffect(() => {
     if (externalPaths !== undefined) {
       setPaths(externalPaths);
+      if (canvasReady) {
+        redrawCanvas();
+      }
     }
-  }, [externalPaths]);
+  }, [externalPaths, canvasReady]);
 
   // Notifier le parent quand paths change
   useEffect(() => {
@@ -30,18 +38,170 @@ export const DrawingCanvas = ({
     }
   }, [paths]);
 
+  // Redessiner tout le canvas
+  const redrawCanvas = () => {
+    if (!canvasRef.current || !contextRef.current) return;
+
+    const ctx = contextRef.current;
+    const canvas = canvasRef.current;
+
+    // Effacer le canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Dessiner le fond blanc
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // TODO: Dessiner l'image de fond SVG si présente
+    // Pour l'instant, on garde le fond blanc
+
+    // Dessiner tous les paths sauvegardés dans l'ordre
+    for (let i = 0; i < paths.length; i++) {
+      const path = paths[i];
+
+      if (path.tool === 'bucket') {
+        // Pour le bucket, réappliquer le flood fill
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const fillColor = hexToRgb(path.color);
+        const result = floodfill(imageData, Math.floor(path.points[0].x), Math.floor(path.points[0].y), fillColor);
+        ctx.putImageData(result, 0, 0);
+      } else {
+        drawPath(ctx, path);
+      }
+    }
+  };
+
+  const handleCanvas = (canvas) => {
+    if (!canvas) return;
+
+    canvas.width = screenWidth;
+    canvas.height = canvasHeight;
+    canvasRef.current = canvas;
+
+    const ctx = canvas.getContext('2d');
+    contextRef.current = ctx;
+
+    // Fond blanc
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    setCanvasReady(true);
+  };
+
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16),
+      a: 255
+    } : { r: 0, g: 0, b: 0, a: 255 };
+  };
+
+  const performFloodFill = async (x, y, color) => {
+    if (!canvasRef.current || !contextRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = contextRef.current;
+
+    try {
+      // Obtenir les données d'image actuelles
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      // Convertir la couleur hex en RGBA
+      const fillColor = hexToRgb(color);
+
+      // Appliquer le flood fill
+      const result = floodfill(imageData, Math.floor(x), Math.floor(y), fillColor);
+
+      // Remettre les données modifiées sur le canvas
+      ctx.putImageData(result, 0, 0);
+
+      // Sauvegarder cette action comme un "path" pour l'undo
+      const fillPath = {
+        id: Date.now() + Math.random(),
+        tool: 'bucket',
+        color: color,
+        points: [{ x, y }]
+      };
+
+      setPaths(prev => [...prev, fillPath]);
+    } catch (error) {
+      console.error('Flood fill error:', error);
+    }
+  };
+
+  const drawPath = (ctx, path) => {
+    if (!path || !path.points || path.points.length === 0) return;
+
+    const { tool, color, points } = path;
+    const pathColor = tool === 'eraser' ? '#FFFFFF' : color;
+
+    // Le bucket est géré séparément dans redrawCanvas
+    if (tool === 'bucket') {
+      return;
+    }
+
+    ctx.strokeStyle = pathColor;
+    ctx.fillStyle = pathColor;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    let lineWidth = 3;
+    if (tool === 'brush') lineWidth = 10;
+    if (tool === 'spray') lineWidth = 2;
+    if (tool === 'eraser') lineWidth = 20;
+    if (tool === 'pencil') lineWidth = 3;
+
+    ctx.lineWidth = lineWidth;
+
+    if (tool === 'stamp') {
+      points.forEach(point => {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 15, 0, Math.PI * 2);
+        ctx.globalAlpha = 0.7;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      });
+      return;
+    }
+
+    if (tool === 'spray') {
+      if (path.sprayPoints) {
+        ctx.globalAlpha = 0.5;
+        path.sprayPoints.forEach(point => {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+      }
+      return;
+    }
+
+    // Pour crayon, pinceau et gomme
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, lineWidth / 2, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+  };
+
   const handleTouchStart = (event) => {
+    if (!canvasReady) return;
+
     const { locationX, locationY } = event.nativeEvent;
 
     if (selectedTool === 'bucket') {
-      // Pour le pot de peinture, créer un grand cercle rempli
-      const bucketPath = {
-        id: Date.now() + Math.random(),
-        tool: 'bucket',
-        color: selectedColor,
-        points: [{ x: locationX, y: locationY }],
-      };
-      setPaths(prev => [...prev, bucketPath]);
+      performFloodFill(locationX, locationY, selectedColor);
       return;
     }
 
@@ -50,10 +210,25 @@ export const DrawingCanvas = ({
   };
 
   const handleTouchMove = (event) => {
-    if (!isDrawing) return;
+    if (!isDrawing || !canvasReady) return;
 
     const { locationX, locationY } = event.nativeEvent;
-    setCurrentPath(prev => [...prev, { x: locationX, y: locationY }]);
+    const newPath = [...currentPath, { x: locationX, y: locationY }];
+    setCurrentPath(newPath);
+
+    // Dessiner en temps réel
+    if (contextRef.current) {
+      const tempPath = {
+        tool: selectedTool,
+        color: selectedColor,
+        points: newPath
+      };
+
+      // Redessiner tout
+      redrawCanvas();
+      // Dessiner le path en cours
+      drawPath(contextRef.current, tempPath);
+    }
   };
 
   const handleTouchEnd = () => {
@@ -67,7 +242,7 @@ export const DrawingCanvas = ({
         points: currentPath,
       };
 
-      // Pour le spray, pré-calculer les positions des grains pour éviter qu'ils bougent
+      // Pour le spray, pré-calculer les positions des grains
       if (selectedTool === 'spray') {
         const sprayPoints = [];
         currentPath.forEach((point) => {
@@ -84,123 +259,12 @@ export const DrawingCanvas = ({
       }
 
       setPaths(prev => [...prev, newPath]);
+      redrawCanvas();
     }
 
     setCurrentPath([]);
     setIsDrawing(false);
   };
-
-  const renderPath = (path, isTemp = false) => {
-    if (!path || !path.points || path.points.length === 0) return null;
-
-    const { tool, color, points, id } = path;
-    const pathColor = tool === 'eraser' ? '#FFFFFF' : color;
-
-    let strokeWidth = 3;
-    if (tool === 'brush') strokeWidth = 10;
-    if (tool === 'spray') strokeWidth = 2;
-    if (tool === 'eraser') strokeWidth = 20;
-    if (tool === 'pencil') strokeWidth = 3;
-
-    if (tool === 'bucket') {
-      // Pot de peinture : grand cercle rempli
-      return points.map((point, index) => (
-        <Circle
-          key={`${id || 'temp'}-bucket-${index}`}
-          cx={point.x}
-          cy={point.y}
-          r={50}
-          fill={pathColor}
-          opacity={0.8}
-        />
-      ));
-    }
-
-    if (tool === 'stamp') {
-      return points.map((point, index) => (
-        <Circle
-          key={`${id || 'temp'}-stamp-${index}`}
-          cx={point.x}
-          cy={point.y}
-          r={15}
-          fill={pathColor}
-          opacity={0.7}
-        />
-      ));
-    }
-
-    if (tool === 'spray') {
-      // Utiliser les points pré-calculés si disponibles, sinon calculer temporairement (pour l'aperçu)
-      if (path.sprayPoints) {
-        return path.sprayPoints.map((sprayPoint, index) => (
-          <Circle
-            key={`${id || 'temp'}-spray-${index}`}
-            cx={sprayPoint.x}
-            cy={sprayPoint.y}
-            r={2}
-            fill={pathColor}
-            opacity={0.5}
-          />
-        ));
-      } else {
-        // Pour l'aperçu temporaire pendant le dessin
-        const tempSprayPoints = [];
-        points.forEach((point, pointIndex) => {
-          for (let i = 0; i < 5; i++) {
-            const offsetX = (Math.random() - 0.5) * 20;
-            const offsetY = (Math.random() - 0.5) * 20;
-            tempSprayPoints.push(
-              <Circle
-                key={`${id || 'temp'}-spray-${pointIndex}-${i}`}
-                cx={point.x + offsetX}
-                cy={point.y + offsetY}
-                r={2}
-                fill={pathColor}
-                opacity={0.5}
-              />
-            );
-          }
-        });
-        return tempSprayPoints;
-      }
-    }
-
-    // Pour crayon, pinceau et gomme
-    if (points.length === 1) {
-      // Si un seul point, dessiner un cercle
-      return (
-        <Circle
-          key={id || 'temp'}
-          cx={points[0].x}
-          cy={points[0].y}
-          r={strokeWidth / 2}
-          fill={pathColor}
-        />
-      );
-    }
-
-    const pathData = points.reduce((acc, point, index) => {
-      if (index === 0) {
-        return `M ${point.x} ${point.y}`;
-      }
-      return `${acc} L ${point.x} ${point.y}`;
-    }, '');
-
-    return (
-      <Path
-        key={id || 'temp'}
-        d={pathData}
-        stroke={pathColor}
-        strokeWidth={strokeWidth}
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    );
-  };
-
-  const BackgroundSVG = backgroundImage ? SVG_COMPONENTS[backgroundImage] : null;
-  const canvasHeight = screenHeight * 0.6;
 
   return (
     <View
@@ -211,28 +275,10 @@ export const DrawingCanvas = ({
       onResponderMove={handleTouchMove}
       onResponderRelease={handleTouchEnd}
     >
-      <Svg width={screenWidth} height={canvasHeight}>
-        {/* Fond blanc pour capturer les touches */}
-        <Rect x={0} y={0} width={screenWidth} height={canvasHeight} fill="white" />
-
-        {/* Image de fond */}
-        {BackgroundSVG && (
-          <G>
-            <BackgroundSVG width={screenWidth} height={canvasHeight} />
-          </G>
-        )}
-
-        {/* Afficher tous les chemins enregistrés */}
-        {paths.map(path => renderPath(path, false))}
-
-        {/* Afficher le chemin en cours */}
-        {currentPath.length > 0 && renderPath({
-          id: 'current',
-          tool: selectedTool,
-          color: selectedColor,
-          points: currentPath
-        }, true)}
-      </Svg>
+      <Canvas
+        ref={handleCanvas}
+        style={{ width: screenWidth, height: canvasHeight }}
+      />
     </View>
   );
 };
