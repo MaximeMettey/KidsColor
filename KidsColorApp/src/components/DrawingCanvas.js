@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { View, PanResponder, StyleSheet, Dimensions } from 'react-native';
-import Svg, { Path, Circle, G } from 'react-native-svg';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, StyleSheet, Dimensions } from 'react-native';
+import Svg, { Path, Circle, G, Rect } from 'react-native-svg';
 import { SVG_COMPONENTS } from '../data/svgs';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -9,76 +9,79 @@ export const DrawingCanvas = ({
   selectedColor,
   selectedTool,
   backgroundImage,
+  paths: externalPaths,
   onPathsChange
 }) => {
-  const [paths, setPaths] = useState([]);
-  const [currentPath, setCurrentPath] = useState(null);
-  const pathsRef = useRef([]);
+  const [paths, setPaths] = useState(externalPaths || []);
+  const [currentPath, setCurrentPath] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+  // Synchroniser avec les paths externes (pour le clear et undo)
+  useEffect(() => {
+    if (externalPaths !== undefined) {
+      setPaths(externalPaths);
+    }
+  }, [externalPaths]);
 
-      onPanResponderGrant: (evt) => {
-        const { locationX, locationY } = evt.nativeEvent;
+  // Notifier le parent quand paths change
+  useEffect(() => {
+    if (onPathsChange) {
+      onPathsChange(paths);
+    }
+  }, [paths]);
 
-        if (selectedTool === 'bucket') {
-          // Pour le pot de peinture, on ne fait rien ici (à implémenter avec flood fill)
-          return;
-        }
+  const handleTouchStart = (event) => {
+    const { locationX, locationY } = event.nativeEvent;
 
-        const newPath = {
-          id: Date.now(),
-          tool: selectedTool,
-          color: selectedColor,
-          points: [{ x: locationX, y: locationY }],
-        };
-        setCurrentPath(newPath);
-      },
+    if (selectedTool === 'bucket') {
+      return;
+    }
 
-      onPanResponderMove: (evt) => {
-        if (!currentPath) return;
+    setIsDrawing(true);
+    setCurrentPath([{ x: locationX, y: locationY }]);
+  };
 
-        const { locationX, locationY } = evt.nativeEvent;
+  const handleTouchMove = (event) => {
+    if (!isDrawing) return;
 
-        setCurrentPath({
-          ...currentPath,
-          points: [...currentPath.points, { x: locationX, y: locationY }],
-        });
-      },
+    const { locationX, locationY } = event.nativeEvent;
+    setCurrentPath(prev => [...prev, { x: locationX, y: locationY }]);
+  };
 
-      onPanResponderRelease: () => {
-        if (currentPath && currentPath.points.length > 0) {
-          const newPaths = [...pathsRef.current, currentPath];
-          pathsRef.current = newPaths;
-          setPaths(newPaths);
-          onPathsChange?.(newPaths);
-        }
-        setCurrentPath(null);
-      },
-    })
-  ).current;
+  const handleTouchEnd = () => {
+    if (!isDrawing) return;
 
-  const renderPath = (path) => {
+    if (currentPath.length > 0) {
+      const newPath = {
+        id: Date.now() + Math.random(),
+        tool: selectedTool,
+        color: selectedColor,
+        points: currentPath,
+      };
+
+      setPaths(prev => [...prev, newPath]);
+    }
+
+    setCurrentPath([]);
+    setIsDrawing(false);
+  };
+
+  const renderPath = (path, isTemp = false) => {
     if (!path || !path.points || path.points.length === 0) return null;
 
-    const { tool, color, points } = path;
-
-    // Pour la gomme, utiliser du blanc
+    const { tool, color, points, id } = path;
     const pathColor = tool === 'eraser' ? '#FFFFFF' : color;
 
-    // Déterminer la taille selon l'outil
     let strokeWidth = 3;
     if (tool === 'brush') strokeWidth = 10;
     if (tool === 'spray') strokeWidth = 2;
     if (tool === 'eraser') strokeWidth = 20;
+    if (tool === 'pencil') strokeWidth = 3;
 
     if (tool === 'stamp') {
-      // Afficher des étoiles/formes aux points
       return points.map((point, index) => (
         <Circle
-          key={`${path.id}-${index}`}
+          key={`${id || 'temp'}-stamp-${index}`}
           cx={point.x}
           cy={point.y}
           r={15}
@@ -89,15 +92,14 @@ export const DrawingCanvas = ({
     }
 
     if (tool === 'spray') {
-      // Effet spray avec plusieurs petits points
-      return points.map((point, index) => {
-        const sprayPoints = [];
+      const allSprayPoints = [];
+      points.forEach((point, pointIndex) => {
         for (let i = 0; i < 5; i++) {
           const offsetX = (Math.random() - 0.5) * 20;
           const offsetY = (Math.random() - 0.5) * 20;
-          sprayPoints.push(
+          allSprayPoints.push(
             <Circle
-              key={`${path.id}-${index}-${i}`}
+              key={`${id || 'temp'}-spray-${pointIndex}-${i}`}
               cx={point.x + offsetX}
               cy={point.y + offsetY}
               r={2}
@@ -106,11 +108,24 @@ export const DrawingCanvas = ({
             />
           );
         }
-        return sprayPoints;
       });
+      return allSprayPoints;
     }
 
-    // Pour crayon et pinceau, dessiner une ligne
+    // Pour crayon, pinceau et gomme
+    if (points.length === 1) {
+      // Si un seul point, dessiner un cercle
+      return (
+        <Circle
+          key={id || 'temp'}
+          cx={points[0].x}
+          cy={points[0].y}
+          r={strokeWidth / 2}
+          fill={pathColor}
+        />
+      );
+    }
+
     const pathData = points.reduce((acc, point, index) => {
       if (index === 0) {
         return `M ${point.x} ${point.y}`;
@@ -120,7 +135,7 @@ export const DrawingCanvas = ({
 
     return (
       <Path
-        key={path.id}
+        key={id || 'temp'}
         d={pathData}
         stroke={pathColor}
         strokeWidth={strokeWidth}
@@ -132,21 +147,38 @@ export const DrawingCanvas = ({
   };
 
   const BackgroundSVG = backgroundImage ? SVG_COMPONENTS[backgroundImage] : null;
+  const canvasHeight = screenHeight * 0.6;
 
   return (
-    <View style={styles.container} {...panResponder.panHandlers}>
-      <Svg width={screenWidth} height={screenHeight * 0.6}>
+    <View
+      style={styles.container}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={handleTouchStart}
+      onResponderMove={handleTouchMove}
+      onResponderRelease={handleTouchEnd}
+    >
+      <Svg width={screenWidth} height={canvasHeight}>
+        {/* Fond blanc pour capturer les touches */}
+        <Rect x={0} y={0} width={screenWidth} height={canvasHeight} fill="white" />
+
+        {/* Image de fond */}
         {BackgroundSVG && (
           <G>
-            <BackgroundSVG width={screenWidth} height={screenHeight * 0.6} />
+            <BackgroundSVG width={screenWidth} height={canvasHeight} />
           </G>
         )}
 
         {/* Afficher tous les chemins enregistrés */}
-        {paths.map(renderPath)}
+        {paths.map(path => renderPath(path, false))}
 
         {/* Afficher le chemin en cours */}
-        {currentPath && renderPath(currentPath)}
+        {currentPath.length > 0 && renderPath({
+          id: 'current',
+          tool: selectedTool,
+          color: selectedColor,
+          points: currentPath
+        }, true)}
       </Svg>
     </View>
   );

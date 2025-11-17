@@ -41,6 +41,7 @@ export const FreeDrawScreen = ({ onBack }) => {
         selectedColor={selectedColor}
         selectedTool={selectedTool}
         backgroundImage={null}
+        paths={paths}
         onPathsChange={setPaths}
       />
 

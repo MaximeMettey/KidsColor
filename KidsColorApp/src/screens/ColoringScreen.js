@@ -51,6 +51,7 @@ export const ColoringScreen = ({ onBack }) => {
         selectedColor={selectedColor}
         selectedTool={selectedTool}
         backgroundImage={selectedImage}
+        paths={paths}
         onPathsChange={setPaths}
       />
 
