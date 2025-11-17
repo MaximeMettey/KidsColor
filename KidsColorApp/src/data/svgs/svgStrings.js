@@ -120,5 +120,52 @@ export const SVG_STRINGS = {
     <ellipse cx="150" cy="220" rx="50" ry="45" fill="white" stroke="black" stroke-width="4"/>
   </svg>`,
 
-  // Ajoutez les autres SVG ici (apple, banana, etc.)
+  ball: `<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+    <!-- Ballon -->
+    <circle cx="150" cy="150" r="90" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Motifs -->
+    <path d="M 150 60 Q 180 90 180 150 Q 180 210 150 240" fill="none" stroke="black" stroke-width="3"/>
+    <path d="M 150 60 Q 120 90 120 150 Q 120 210 150 240" fill="none" stroke="black" stroke-width="3"/>
+    <path d="M 60 150 Q 90 120 150 120 Q 210 120 240 150" fill="none" stroke="black" stroke-width="3"/>
+    <path d="M 60 150 Q 90 180 150 180 Q 210 180 240 150" fill="none" stroke="black" stroke-width="3"/>
+  </svg>`,
+
+  apple: `<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+    <!-- Corps de la pomme -->
+    <circle cx="150" cy="160" r="80" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Creux du haut -->
+    <path d="M 150 80 Q 130 85 130 100" fill="white" stroke="black" stroke-width="4"/>
+    <path d="M 150 80 Q 170 85 170 100" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Tige -->
+    <path d="M 150 80 L 150 50" fill="none" stroke="black" stroke-width="4"/>
+    <!-- Feuille -->
+    <ellipse cx="170" cy="60" rx="15" ry="25" fill="white" stroke="black" stroke-width="3" transform="rotate(30 170 60)"/>
+  </svg>`,
+
+  chair: `<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+    <!-- Dossier -->
+    <rect x="90" y="60" width="120" height="15" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Montants dossier -->
+    <rect x="90" y="75" width="15" height="60" fill="white" stroke="black" stroke-width="3"/>
+    <rect x="195" y="75" width="15" height="60" fill="white" stroke="black" stroke-width="3"/>
+    <!-- Assise -->
+    <rect x="80" y="135" width="140" height="20" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Pied avant gauche -->
+    <rect x="85" y="155" width="12" height="90" fill="white" stroke="black" stroke-width="3"/>
+    <!-- Pied avant droit -->
+    <rect x="203" y="155" width="12" height="90" fill="white" stroke="black" stroke-width="3"/>
+    <!-- Pied arrière gauche -->
+    <rect x="90" y="135" width="12" height="50" fill="white" stroke="black" stroke-width="3"/>
+    <!-- Pied arrière droit -->
+    <rect x="198" y="135" width="12" height="50" fill="white" stroke="black" stroke-width="3"/>
+  </svg>`,
+
+  cup: `<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+    <!-- Corps de la tasse -->
+    <path d="M 100 100 L 90 200 Q 90 220 110 220 L 190 220 Q 210 220 210 200 L 200 100 Z" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Bord -->
+    <ellipse cx="150" cy="100" rx="50" ry="12" fill="white" stroke="black" stroke-width="4"/>
+    <!-- Anse -->
+    <path d="M 210 120 Q 245 135 245 165 Q 245 195 210 180" fill="none" stroke="black" stroke-width="4"/>
+  </svg>`,
 };
