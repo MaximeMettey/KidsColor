@@ -34,6 +34,14 @@ export const DrawingCanvas = ({
     const { locationX, locationY } = event.nativeEvent;
 
     if (selectedTool === 'bucket') {
+      // Pour le pot de peinture, créer un grand cercle rempli
+      const bucketPath = {
+        id: Date.now() + Math.random(),
+        tool: 'bucket',
+        color: selectedColor,
+        points: [{ x: locationX, y: locationY }],
+      };
+      setPaths(prev => [...prev, bucketPath]);
       return;
     }
 
@@ -59,6 +67,22 @@ export const DrawingCanvas = ({
         points: currentPath,
       };
 
+      // Pour le spray, pré-calculer les positions des grains pour éviter qu'ils bougent
+      if (selectedTool === 'spray') {
+        const sprayPoints = [];
+        currentPath.forEach((point) => {
+          for (let i = 0; i < 5; i++) {
+            const offsetX = (Math.random() - 0.5) * 20;
+            const offsetY = (Math.random() - 0.5) * 20;
+            sprayPoints.push({
+              x: point.x + offsetX,
+              y: point.y + offsetY,
+            });
+          }
+        });
+        newPath.sprayPoints = sprayPoints;
+      }
+
       setPaths(prev => [...prev, newPath]);
     }
 
@@ -78,6 +102,20 @@ export const DrawingCanvas = ({
     if (tool === 'eraser') strokeWidth = 20;
     if (tool === 'pencil') strokeWidth = 3;
 
+    if (tool === 'bucket') {
+      // Pot de peinture : grand cercle rempli
+      return points.map((point, index) => (
+        <Circle
+          key={`${id || 'temp'}-bucket-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r={50}
+          fill={pathColor}
+          opacity={0.8}
+        />
+      ));
+    }
+
     if (tool === 'stamp') {
       return points.map((point, index) => (
         <Circle
@@ -92,24 +130,39 @@ export const DrawingCanvas = ({
     }
 
     if (tool === 'spray') {
-      const allSprayPoints = [];
-      points.forEach((point, pointIndex) => {
-        for (let i = 0; i < 5; i++) {
-          const offsetX = (Math.random() - 0.5) * 20;
-          const offsetY = (Math.random() - 0.5) * 20;
-          allSprayPoints.push(
-            <Circle
-              key={`${id || 'temp'}-spray-${pointIndex}-${i}`}
-              cx={point.x + offsetX}
-              cy={point.y + offsetY}
-              r={2}
-              fill={pathColor}
-              opacity={0.5}
-            />
-          );
-        }
-      });
-      return allSprayPoints;
+      // Utiliser les points pré-calculés si disponibles, sinon calculer temporairement (pour l'aperçu)
+      if (path.sprayPoints) {
+        return path.sprayPoints.map((sprayPoint, index) => (
+          <Circle
+            key={`${id || 'temp'}-spray-${index}`}
+            cx={sprayPoint.x}
+            cy={sprayPoint.y}
+            r={2}
+            fill={pathColor}
+            opacity={0.5}
+          />
+        ));
+      } else {
+        // Pour l'aperçu temporaire pendant le dessin
+        const tempSprayPoints = [];
+        points.forEach((point, pointIndex) => {
+          for (let i = 0; i < 5; i++) {
+            const offsetX = (Math.random() - 0.5) * 20;
+            const offsetY = (Math.random() - 0.5) * 20;
+            tempSprayPoints.push(
+              <Circle
+                key={`${id || 'temp'}-spray-${pointIndex}-${i}`}
+                cx={point.x + offsetX}
+                cy={point.y + offsetY}
+                r={2}
+                fill={pathColor}
+                opacity={0.5}
+              />
+            );
+          }
+        });
+        return tempSprayPoints;
+      }
     }
 
     // Pour crayon, pinceau et gomme
